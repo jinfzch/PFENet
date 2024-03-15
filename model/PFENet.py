@@ -8,6 +8,7 @@ import cv2
 
 import model.resnet as models
 import model.vgg as vgg_models
+import model.mobilenet as mobilenetv3_models
 
 
 def Weighted_GAP(supp_feat, mask):
@@ -44,13 +45,40 @@ def get_vgg16_layer(model):
     layer3 = nn.Sequential(*layers_3) 
     layer4 = nn.Sequential(*layers_4)
     return layer0,layer1,layer2,layer3,layer4
+  
+def get_mobilenetv3_large_layer(model):
+    layer0_idx = range(0,3)
+    layer1_idx = range(3,5)
+    layer2_idx = range(5,8)
+    layer3_idx = range(8,14)
+    layer4_idx = range(14,16)
+    layers_0 = []
+    layers_1 = []
+    layers_2 = []
+    layers_3 = []
+    layers_4 = []
+    for idx in layer0_idx:
+        layers_0 += [model.features[idx]]
+    for idx in layer1_idx:
+        layers_1 += [model.features[idx]]
+    for idx in layer2_idx:
+        layers_2 += [model.features[idx]]
+    for idx in layer3_idx:
+        layers_3 += [model.features[idx]]
+    for idx in layer4_idx:
+        layers_4 += [model.features[idx]]  
+    layer0 = nn.Sequential(*layers_0) 
+    layer1 = nn.Sequential(*layers_1) 
+    layer2 = nn.Sequential(*layers_2) 
+    layer3 = nn.Sequential(*layers_3) 
+    layer4 = nn.Sequential(*layers_4)
+    return layer0,layer1,layer2,layer3,layer4
 
 class PFENet(nn.Module):
-    def __init__(self, layers=50, classes=2, zoom_factor=8, \
+    def __init__(self, classes=2, zoom_factor=8, \
         criterion=nn.CrossEntropyLoss(ignore_index=255), BatchNorm=nn.BatchNorm2d, \
-        pretrained=True, sync_bn=True, shot=1, ppm_scales=[60, 30, 15, 8], vgg=False):
+        pretrained=True, sync_bn=True, shot=1, ppm_scales=[60, 30, 15, 8], backbone='resnet'):
         super(PFENet, self).__init__()
-        assert layers in [50, 101, 152]
         print(ppm_scales)
         assert classes > 1
         from torch.nn import BatchNorm2d as BatchNorm        
@@ -58,11 +86,12 @@ class PFENet(nn.Module):
         self.criterion = criterion
         self.shot = shot
         self.ppm_scales = ppm_scales
-        self.vgg = vgg
+        self.backbone = backbone
 
         models.BatchNorm = BatchNorm
         
-        if self.vgg:
+        # 载入主干网络
+        if self.backbone == 'vgg':
             print('INFO: Using VGG_16 bn')
             vgg_models.BatchNorm = BatchNorm
             vgg16 = vgg_models.vgg16_bn(pretrained=pretrained)
@@ -70,14 +99,15 @@ class PFENet(nn.Module):
             self.layer0, self.layer1, self.layer2, \
                 self.layer3, self.layer4 = get_vgg16_layer(vgg16)
 
+        elif self.backbone == 'mobilenetv3':
+            print('INFO: Using mobilenet_v3 bn')
+            mobilenet_v3_large = mobilenetv3_models.mobilenet_v3_large_use()
+            self.layer0, self.layer1, self.layer2, self.layer3, self.layer4 = get_mobilenetv3_large_layer(mobilenet_v3_large)
+
         else:
-            print('INFO: Using ResNet {}'.format(layers))
-            if layers == 50:
-                resnet = models.resnet50(pretrained=pretrained)
-            elif layers == 101:
-                resnet = models.resnet101(pretrained=pretrained)
-            else:
-                resnet = models.resnet152(pretrained=pretrained)
+            print('INFO: Using ResNet 50')
+            resnet = models.resnet50(pretrained=pretrained)
+
             self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu1, resnet.conv2, resnet.bn2, resnet.relu2, resnet.conv3, resnet.bn3, resnet.relu3, resnet.maxpool)
             self.layer1, self.layer2, self.layer3, self.layer4 = resnet.layer1, resnet.layer2, resnet.layer3, resnet.layer4
 
@@ -91,12 +121,17 @@ class PFENet(nn.Module):
                     m.dilation, m.padding, m.stride = (4, 4), (4, 4), (1, 1)
                 elif 'downsample.0' in n:
                     m.stride = (1, 1)
+            
+
 
         reduce_dim = 256
-        if self.vgg:
+        if self.backbone == 'vgg':
             fea_dim = 512 + 256
+        elif self.backbone == 'mobilenetv3':
+            # 实际为升维，由240->256 【尝试降维？128】
+            fea_dim = 160 + 80 # mobilenetv3-large提取的特征图尺寸
         else:
-            fea_dim = 1024 + 512       
+            fea_dim = 1024 + 512 # resnet
 
         self.cls = nn.Sequential(
             nn.Conv2d(reduce_dim, reduce_dim, kernel_size=3, padding=1, bias=False),
@@ -188,10 +223,14 @@ class PFENet(nn.Module):
             query_feat_2 = self.layer2(query_feat_1)
             query_feat_3 = self.layer3(query_feat_2)  
             query_feat_4 = self.layer4(query_feat_3)
-            if self.vgg:
+            if self.backbone == 'vgg':
                 query_feat_2 = F.interpolate(query_feat_2, size=(query_feat_3.size(2),query_feat_3.size(3)), mode='bilinear', align_corners=True)
 
-        query_feat = torch.cat([query_feat_3, query_feat_2], 1)
+        # 需要将block2的特征图（双线性插值）到block3特征图相同尺寸
+        query_feat_2_upsampled = F.interpolate(query_feat_2, size=query_feat_3.shape[2:], mode='bilinear', align_corners=False)
+        # 拼接不同层的查询特征
+        query_feat = torch.cat([query_feat_3, query_feat_2_upsampled], 1)
+        # 查询特征下采样 - 减少计算量
         query_feat = self.down_query(query_feat)
 
         #   Support Feature     
@@ -209,10 +248,11 @@ class PFENet(nn.Module):
                 mask = F.interpolate(mask, size=(supp_feat_3.size(2), supp_feat_3.size(3)), mode='bilinear', align_corners=True)
                 supp_feat_4 = self.layer4(supp_feat_3*mask)
                 final_supp_list.append(supp_feat_4)
-                if self.vgg:
+                if self.backbone == 'vgg':
                     supp_feat_2 = F.interpolate(supp_feat_2, size=(supp_feat_3.size(2),supp_feat_3.size(3)), mode='bilinear', align_corners=True)
             
-            supp_feat = torch.cat([supp_feat_3, supp_feat_2], 1)
+            supp_feat_2_upsampled = F.interpolate(supp_feat_2, size=supp_feat_3.shape[2:], mode='bilinear', align_corners=False)
+            supp_feat = torch.cat([supp_feat_3, supp_feat_2_upsampled], 1)
             supp_feat = self.down_supp(supp_feat)
             supp_feat = Weighted_GAP(supp_feat, mask)
             supp_feat_list.append(supp_feat)
@@ -284,7 +324,12 @@ class PFENet(nn.Module):
         query_feat = self.res1(query_feat)
         query_feat = self.res2(query_feat) + query_feat           
         out = self.cls(query_feat)
-        
+
+        # 特征丰富模块修改：PPM + SEM（空间池化 + 通道注意力）
+        # shot = 1的情况
+        feat_supp = supp_feat_list[0]
+        feat_quer = query_feat
+        # corr_query_mask
 
         #   Output Part
         if self.zoom_factor != 1:

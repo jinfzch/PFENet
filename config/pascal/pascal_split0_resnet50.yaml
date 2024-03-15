@@ -1,12 +1,11 @@
 DATA:
-  data_root: 
-  train_list: 
-  val_list: 
+  data_root: ../BAM/data/VOCdevkit2012/VOC2012
+  train_list: ./lists/pascal/voc_sbd_merge_noduplicate.txt
+  val_list: ./lists/pascal/val.txt
   classes: 2
 
 
 TRAIN:
-  layers: 50
   sync_bn: False
   train_h: 473
   train_w: 473
@@ -33,12 +32,12 @@ TRAIN:
   print_freq: 5
   save_freq: 20
   save_path: exp/pascal/split0_resnet50/model
-  weight:  # load weight for fine-tuning or testing
+  weight:  exp/pascal/split0_resnet50/model/final.ppth # load weight for fine-tuning or testing
   resume:  # path to latest checkpoint (default: none)
   evaluate: True
   split: 0
   shot: 1
-  vgg: False
+  backbone: resnet # resnet, vgg, mobilenetv3,,,
   ppm_scales: [60, 30, 15, 8]
   fix_random_seed_val: True
   warmup: False
@@ -58,4 +57,3 @@ Distributed:
   opt_level: 'O0'
   keep_batchnorm_fp32:
   loss_scale:
-

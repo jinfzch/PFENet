@@ -96,9 +96,9 @@ def main_worker(gpu, ngpus_per_node, argss):
 
     criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_label)
 
-    model = PFENet(layers=args.layers, classes=2, zoom_factor=8, \
+    model = PFENet(classes=2, zoom_factor=8, \
         criterion=nn.CrossEntropyLoss(ignore_index=255), BatchNorm=BatchNorm, \
-        pretrained=True, shot=args.shot, ppm_scales=args.ppm_scales, vgg=args.vgg)
+        pretrained=True, shot=args.shot, ppm_scales=args.ppm_scales, backbone=args.backbone)
 
     for param in model.layer0.parameters():
         param.requires_grad = False

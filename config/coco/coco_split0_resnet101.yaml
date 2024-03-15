@@ -1,11 +1,10 @@
 DATA:
-  data_root: 
-  train_list: 
-  val_list: 
+  data_root: ../data/VOCdevkit2012/VOC2012
+  train_list: ./lists/pascal/voc_sbd_merge_noduplicate.txt
+  val_list: ./lists/pascal/val.txt
   classes: 2
 
 TRAIN:
-  layers: 101 # 50 or 101
   sync_bn: False
   train_h: 641
   train_w: 641
@@ -37,7 +36,7 @@ TRAIN:
   evaluate: True
   split: 0
   shot: 1 
-  vgg: False  # whether to use vgg as the backbone
+  backbone: resnet # resnet, vgg, mobilenetv3
   ppm_scales: [1.0, 0.5, 0.25, 0.125]
   fix_random_seed_val: True
   warmup: False
