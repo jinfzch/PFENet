@@ -115,10 +115,8 @@ def main_worker(gpu, ngpus_per_node, argss):
         [
         {'params': model.down_query.parameters()},
         {'params': model.down_supp.parameters()},
-        {'params': model.init_merge.parameters()},
-        {'params': model.alpha_conv.parameters()},
-        {'params': model.beta_conv.parameters()},
-        {'params': model.inner_cls.parameters()},
+        {'params': model.ASPP.parameters()},
+        {'params': model.SE.parameters()},
         {'params': model.res1.parameters()},
         {'params': model.res2.parameters()},        
         {'params': model.cls.parameters()}],
@@ -213,7 +211,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             writer.add_scalar('mAcc_train', mAcc_train, epoch_log)
             writer.add_scalar('allAcc_train', allAcc_train, epoch_log)     
 
-        if args.evaluate and (epoch % 2 == 0 or (args.epochs<=50 and epoch%1==0)):
+        if args.evaluate and (epoch % 5 == 0 or (args.epochs<=50 and epoch%1==0)):
             loss_val, mIoU_val, mAcc_val, allAcc_val, class_miou = validate(val_loader, model, criterion)
             if main_process():
                 writer.add_scalar('loss_val', loss_val, epoch_log)
@@ -238,7 +236,6 @@ def train(train_loader, model, optimizer, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     main_loss_meter = AverageMeter()
-    aux_loss_meter = AverageMeter()
     loss_meter = AverageMeter()
     intersection_meter = AverageMeter()
     union_meter = AverageMeter()
@@ -261,22 +258,22 @@ def train(train_loader, model, optimizer, epoch):
         input = input.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
         
-        output, main_loss, aux_loss = model(s_x=s_input, s_y=s_mask, x=input, y=target)
+        output, main_loss = model(s_x=s_input, s_y=s_mask, x=input, y=target)
 
         if not args.multiprocessing_distributed:
-            main_loss, aux_loss = torch.mean(main_loss), torch.mean(aux_loss)
-        loss = main_loss + args.aux_weight * aux_loss
+            main_loss = torch.mean(main_loss)
+        loss = main_loss
         optimizer.zero_grad()
 
         loss.backward()
         optimizer.step()
         n = input.size(0)
         if args.multiprocessing_distributed:
-            main_loss, aux_loss, loss = main_loss.detach() * n, aux_loss * n, loss * n 
+            main_loss, loss = main_loss.detach() * n, loss * n 
             count = target.new_tensor([n], dtype=torch.long)
-            dist.all_reduce(main_loss), dist.all_reduce(aux_loss), dist.all_reduce(loss), dist.all_reduce(count)
+            dist.all_reduce(main_loss), dist.all_reduce(loss), dist.all_reduce(count)
             n = count.item()
-            main_loss, aux_loss, loss = main_loss / n, aux_loss / n, loss / n
+            main_loss, loss = main_loss / n, loss / n
 
         intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
         if args.multiprocessing_distributed:
@@ -286,7 +283,6 @@ def train(train_loader, model, optimizer, epoch):
         
         accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
         main_loss_meter.update(main_loss.item(), n)
-        aux_loss_meter.update(aux_loss.item(), n)
         loss_meter.update(loss.item(), n)
         batch_time.update(time.time() - end)
         end = time.time()
@@ -303,14 +299,12 @@ def train(train_loader, model, optimizer, epoch):
                         'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
                         'Remain {remain_time} '
                         'MainLoss {main_loss_meter.val:.4f} '
-                        'AuxLoss {aux_loss_meter.val:.4f} '                        
                         'Loss {loss_meter.val:.4f} '
                         'Accuracy {accuracy:.4f}.'.format(epoch+1, args.epochs, i + 1, len(train_loader),
                                                           batch_time=batch_time,
                                                           data_time=data_time,
                                                           remain_time=remain_time,
                                                           main_loss_meter=main_loss_meter,
-                                                          aux_loss_meter=aux_loss_meter,
                                                           loss_meter=loss_meter,
                                                           accuracy=accuracy))
         if main_process():

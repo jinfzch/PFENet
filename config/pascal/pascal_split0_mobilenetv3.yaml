@@ -20,10 +20,10 @@ TRAIN:
   aux_weight: 1.0
   train_gpu: [0]
   workers: 8  # data loader workers
-  batch_size: 4  # batch size for training
+  batch_size: 64  # batch size for training
   batch_size_val: 1
   base_lr: 0.0025
-  epochs: 200
+  epochs: 60 # 原为200
   start_epoch: 0
   power: 0.9 # 0 means no decay
   momentum: 0.9
@@ -31,8 +31,8 @@ TRAIN:
   manual_seed: 321
   print_freq: 5
   save_freq: 20
-  save_path: exp/pascal/split0_mobilenetv3/model # train/test result
-  weight:  exp/pascal/split0_mobilenetv3/model/final.ppth # load weight for fine-tuning or testing
+  save_path: exp/pascal/split0/mobilenetv3/model # train/test result
+  weight:  exp/pascal/split0/mobilenetv3/model/final.pth # load weight for fine-tuning or testing
   resume:  # path to latest checkpoint (default: none)
   evaluate: True
   split: 0
